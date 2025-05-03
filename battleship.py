@@ -1,3 +1,5 @@
+#code given from proj files:
+
 """
 battleship.py
 
