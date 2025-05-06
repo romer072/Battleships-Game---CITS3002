@@ -78,6 +78,19 @@ def wait_for_players(server):
         players.append(conn)
     return players
 
+def coord_to_indices(coord):
+    """
+    Converts coordinate like 'B5' to (1, 4)
+    """
+    try:
+        row_letter = coord[0].upper()
+        col_number = coord[1:]
+        row = ord(row_letter) - ord('A')
+        col = int(col_number) - 1
+        return row, col
+    except:
+        raise ValueError("Invalid coordinate format.")
+
 
 def handle_player(player_index, game: GameState):
     conn = game.players[player_index]
@@ -109,7 +122,13 @@ def handle_player(player_index, game: GameState):
                     continue
 
                 coord = parts[1]
-                result = board.fire_at(coord)
+                
+                try:
+                    row, col = coord_to_indices(coord)
+                    result = board.fire_at(row, col)  # 👈 YOUR actual method
+                except Exception as e:
+                    conn.sendall(f"Invalid coordinate: {coord}\n".encode())
+                    continue
 
                 conn.sendall(f"RESULT {result}\n".encode())
                 game.players[opponent_index].sendall(
