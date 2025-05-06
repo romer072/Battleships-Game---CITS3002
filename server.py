@@ -109,7 +109,7 @@ def handle_player(player_index, game: GameState):
                     continue
 
                 coord = parts[1]
-                result = board.fire(coord)
+                result = board.fire_at(coord)
 
                 conn.sendall(f"RESULT {result}\n".encode())
                 game.players[opponent_index].sendall(
