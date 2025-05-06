@@ -1,38 +1,154 @@
-"""
-server.py
+# """
+# server.py
 
-Serves a single-player Battleship session to one connected client.
-Game logic is handled entirely on the server using battleship.py.
-Client sends FIRE commands, and receives game feedback.
+# Serves a single-player Battleship session to one connected client.
+# Game logic is handled entirely on the server using battleship.py.
+# Client sends FIRE commands, and receives game feedback.
 
-TODO: For Tier 1, item 1, you don't need to modify this file much. 
-The core issue is in how the client handles incoming messages.
-However, if you want to support multiple clients (i.e. progress through further Tiers), you'll need concurrency here too.
-"""
+# TODO: For Tier 1, item 1, you don't need to modify this file much. 
+# The core issue is in how the client handles incoming messages.
+# However, if you want to support multiple clients (i.e. progress through further Tiers), you'll need concurrency here too.
+# """
+
+# import socket
+# from battleship import run_single_player_game_online
+
+# HOST = '127.0.0.1'
+# PORT = 5000
+
+# def main():
+#     print(f"[INFO] Server listening on {HOST}:{PORT}")
+#     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+#         s.bind((HOST, PORT))
+#         s.listen(2)
+#         conn, addr = s.accept()
+#         print(f"[INFO] Client connected from {addr}")
+#         with conn:
+#             rfile = conn.makefile('r')
+#             wfile = conn.makefile('w')
+#             run_single_player_game_online(rfile, wfile)
+#         print("[INFO] Client disconnected.")
+
+# # HINT: For multiple clients, you'd need to:
+# # 1. Accept connections in a loop
+# # 2. Handle each client in a separate thread
+# # 3. Import threading and create a handle_client function
+
+# if __name__ == "__main__":
+#     main()
+
+
+
 
 import socket
-from battleship import run_single_player_game_online
+import threading
+import sys
+from battleship import Board  # You must already have this defined
 
-HOST = '127.0.0.1'
-PORT = 5000
+
+class GameState:
+    def __init__(self, p1_sock, p2_sock):
+        self.players = [p1_sock, p2_sock]
+        self.boards = [BattleshipBoard(), BattleshipBoard()]
+        self.current_turn = 0  # 0: player 1, 1: player 2
+        self.lock = threading.Lock()
+
+    def switch_turn(self):
+        with self.lock:
+            self.current_turn = 1 - self.current_turn
+
+    def get_opponent_index(self, i):
+        return 1 - i
+
+
+def setup_server(host='0.0.0.0', port=12345):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((host, port))
+    server.listen(2)
+    print(f"[SERVER] Listening on {host}:{port}")
+    return server
+
+
+def wait_for_players(server):
+    players = []
+    while len(players) < 2:
+        conn, addr = server.accept()
+        print(f"[CONNECT] Player {len(players)+1} joined from {addr}")
+        conn.sendall(f"You are Player {len(players)+1}\n".encode())
+        players.append(conn)
+    return players
+
+
+def handle_player(player_index, game: GameState):
+    conn = game.players[player_index]
+    opponent_index = game.get_opponent_index(player_index)
+    board = game.boards[opponent_index]
+
+    conn.sendall("Game started! You will be firing at your opponent's board.\n".encode())
+
+    while True:
+        try:
+            msg = conn.recv(1024).decode().strip()
+            if not msg:
+                print(f"[DISCONNECT] Player {player_index+1} disconnected.")
+                break
+
+            if msg.lower() == 'quit':
+                conn.sendall("You quit. Game over.\n".encode())
+                game.players[opponent_index].sendall("Opponent quit. You win!\n".encode())
+                break
+
+            if game.current_turn != player_index:
+                conn.sendall("Not your turn.\n".encode())
+                continue
+
+            if msg.startswith("FIRE"):
+                parts = msg.split()
+                if len(parts) != 2:
+                    conn.sendall("Usage: FIRE <coord>\n".encode())
+                    continue
+
+                coord = parts[1]
+                result = board.fire(coord)
+
+                conn.sendall(f"RESULT {result}\n".encode())
+                game.players[opponent_index].sendall(
+                    f"Opponent fired at {coord}: {result}\n".encode()
+                )
+
+                if board.all_ships_sunk():
+                    conn.sendall("You win!\n".encode())
+                    game.players[opponent_index].sendall("You lose!\n".encode())
+                    break
+                else:
+                    game.switch_turn()
+            else:
+                conn.sendall("Invalid command. Use: FIRE <coord> or QUIT\n".encode())
+
+        except Exception as e:
+            print(f"[ERROR] With Player {player_index+1}: {e}")
+            break
+
+    conn.close()
+
 
 def main():
-    print(f"[INFO] Server listening on {HOST}:{PORT}")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((HOST, PORT))
-        s.listen(2)
-        conn, addr = s.accept()
-        print(f"[INFO] Client connected from {addr}")
-        with conn:
-            rfile = conn.makefile('r')
-            wfile = conn.makefile('w')
-            run_single_player_game_online(rfile, wfile)
-        print("[INFO] Client disconnected.")
+    server = setup_server()
+    players = wait_for_players(server)
+    game = GameState(players[0], players[1])
 
-# HINT: For multiple clients, you'd need to:
-# 1. Accept connections in a loop
-# 2. Handle each client in a separate thread
-# 3. Import threading and create a handle_client function
+    threads = []
+    for i in range(2):
+        t = threading.Thread(target=handle_player, args=(i, game))
+        t.start()
+        threads.append(t)
 
-if __name__ == "__main__":
+    for t in threads:
+        t.join()
+
+    print("[SERVER] Game over. Server shutting down.")
+    server.close()
+
+
+if __name__ == '__main__':
     main()
