@@ -49,7 +49,7 @@ from battleship import Board  # You must already have this defined
 class GameState:
     def __init__(self, p1_sock, p2_sock):
         self.players = [p1_sock, p2_sock]
-        self.boards = [BattleshipBoard(), BattleshipBoard()]
+        self.boards = [Board(), Board()]
         self.current_turn = 0  # 0: player 1, 1: player 2
         self.lock = threading.Lock()
 
