@@ -17,30 +17,35 @@ def simulate_player(player_number, fire_coords):
                     data = sock.recv(1024).decode()
                     if not data:
                         break
-                    print(f"[Player {player_number} Received]: {data.strip()}")
+                    for line in data.strip().split('\n'):
+                        print(f"[Player {player_number} Received]: {line}")
                 except:
                     break
 
         # Start listener thread
         threading.Thread(target=listen, daemon=True).start()
 
-        # Let game start
+        # Let the server start the game
         time.sleep(2)
 
         for coord in fire_coords:
-            print(f"[Player {player_number}] Sending: FIRE {coord}")
-            sock.sendall(f"FIRE {coord}\n".encode())
-            time.sleep(3)  # Give the other player time to respond
+            msg = f"FIRE {coord}"
+            print(f"[Player {player_number}] Sending: {msg}")
+            sock.sendall((msg + "\n").encode())
+            time.sleep(3)  # Wait for turn + opponent response
 
+        # Exit game cleanly
         time.sleep(2)
         sock.sendall(b"QUIT\n")
+        print(f"[Player {player_number}] Sent: QUIT")
         sock.close()
+
     except Exception as e:
         print(f"[Player {player_number}] Error: {e}")
 
 def main():
-    # Player 1 fires at A1, A2
-    # Player 2 fires at B1, B2
+    # 🔫 Player 1 fires at A1, A2
+    # 🔫 Player 2 fires at B1, B2
     player1_coords = ["A1", "A2"]
     player2_coords = ["B1", "B2"]
 
@@ -52,7 +57,7 @@ def main():
 
     t1.join()
     t2.join()
-    print("[Test] Both players completed.")
+    print("\n✅ [Test Complete] Both players have finished.\n")
 
 if __name__ == '__main__':
     main()
