@@ -22,20 +22,19 @@ def simulate_player(player_number, fire_coords):
                 except:
                     break
 
-        # Start listener thread
+        # Start background listener
         threading.Thread(target=listen, daemon=True).start()
 
-        # Let server send intro messages
+        # Let server finish welcome message
         time.sleep(2)
 
-        # Simulate firing sequence
         for coord in fire_coords:
             msg = f"FIRE {coord}"
             print(f"[Player {player_number}] Sending: {msg}")
             sock.sendall((msg + "\n").encode())
-            time.sleep(3)  # Wait to respect turn order and allow response
+            time.sleep(3)  # Respect turn cycle
 
-        # Send QUIT to end the game
+        # Send QUIT if still in game
         time.sleep(2)
         sock.sendall(b"QUIT\n")
         print(f"[Player {player_number}] Sent: QUIT")
@@ -45,9 +44,12 @@ def simulate_player(player_number, fire_coords):
         print(f"[Player {player_number}] Error: {e}")
 
 def main():
-    # Customize shots here
-    player1_coords = ["A1", "A2"]
-    player2_coords = ["B1", "B2"]
+    # Different test coordinates now!
+    player1_coords = ["C3", "C4", "D4"]   # Pretend aiming for vertical ship
+    player2_coords = ["F5", "G5", "H5"]   # Pretend aiming for horizontal ship
+
+    # Give server a moment to get ready
+    time.sleep(1)
 
     t1 = threading.Thread(target=simulate_player, args=(1, player1_coords))
     t2 = threading.Thread(target=simulate_player, args=(2, player2_coords))
@@ -58,7 +60,7 @@ def main():
     t1.join()
     t2.join()
 
-    print("\n✅ [Test Complete] Both players have finished.\n")
+    print("\n✅ [Test Complete] All new moves have been executed.\n")
 
 if __name__ == '__main__':
     main()

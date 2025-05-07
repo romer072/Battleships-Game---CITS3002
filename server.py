@@ -115,6 +115,11 @@ def handle_player(player_index, game: GameState):
                 conn.sendall("Not your turn.\n".encode())
                 continue
 
+            if msg.upper() == "SHOW":
+                board_view = game.boards[player_index].render_display_grid()
+                conn.sendall(board_view.encode())
+                continue
+
             if msg.startswith("FIRE"):
                 parts = msg.split()
                 if len(parts) != 2:
