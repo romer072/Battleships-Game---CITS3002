@@ -43,6 +43,7 @@
 import socket
 import threading
 import sys
+import time
 from battleship import Board  # You must already have this defined
 
 
@@ -60,24 +61,6 @@ class GameState:
     def get_opponent_index(self, i):
         return 1 - i
 
-
-def setup_server(host='0.0.0.0', port=12345):
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((host, port))
-    server.listen(2)
-    print(f"[SERVER] Listening on {host}:{port}")
-    return server
-
-
-def wait_for_players(server):
-    players = []
-    while len(players) < 2:
-        conn, addr = server.accept()
-        print(f"[CONNECT] Player {len(players)+1} joined from {addr}")
-        conn.sendall(f"You are Player {len(players)+1}\n".encode())
-        players.append(conn)
-    return players
-
 def coord_to_indices(coord):
     """
     Converts coordinate like 'B5' to (1, 4)
@@ -91,7 +74,33 @@ def coord_to_indices(coord):
     except:
         raise ValueError("Invalid coordinate format.")
 
+# --- Step 1: Helper to validate coordinates ---
+def is_valid_coord(coord):
+    if len(coord) < 2:
+        return False
+    row = coord[0].upper()
+    col = coord[1:]
+    return row in "ABCDEFGHIJ" and col.isdigit() and 1 <= int(col) <= 10
 
+# --- Step 2: Start and restart games ---
+def start_game(game):
+    for idx in range(MAX_PLAYERS):
+        game.players[idx].sendall(f"You are Player {idx+1}\n".encode())
+    time.sleep(1)
+
+    threads = []
+    for idx in range(MAX_PLAYERS):
+        t = threading.Thread(target=handle_player, args=(idx, game))
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
+
+
+
+
+# --- Step 3: Handle each player's session ---
 def handle_player(player_index, game: GameState):
     conn = game.players[player_index]
     opponent_index = game.get_opponent_index(player_index)
@@ -101,87 +110,91 @@ def handle_player(player_index, game: GameState):
 
     while True:
         try:
+            conn.settimeout(INACTIVITY_TIMEOUT)
             msg = conn.recv(1024).decode().strip()
             if not msg:
-                print(f"[DISCONNECT] Player {player_index+1} disconnected.")
-                break
+                raise ConnectionError("Empty message received")
 
             if msg.lower() == 'quit':
                 conn.sendall("You quit. Game over.\n".encode())
                 game.players[opponent_index].sendall("Opponent quit. You win!\n".encode())
                 break
 
-            if game.current_turn != player_index:
-                conn.sendall("Not your turn.\n".encode())
-                continue
-
-            if msg.upper() == "SHOW":
+            if msg.upper() == 'SHOW':
                 board_view = game.boards[player_index].render_display_grid()
                 conn.sendall(board_view.encode())
                 continue
 
-            if msg.startswith("FIRE"):
-                parts = msg.split()
-                if len(parts) != 2:
-                    conn.sendall("Usage: FIRE <coord>\n".encode())
-                    continue
-
-                coord = parts[1]
-                try:
-                    row, col = coord_to_indices(coord)
-                    status, sunk = board.fire_at(row, col)
-                except Exception:
-                    conn.sendall(f"Invalid coordinate: {coord}\n".encode())
-                    continue
-
-                # Format result message
-                if sunk:
-                    result_msg = f"{status.upper()} — Sunk {sunk}"
-                else:
-                    result_msg = status.upper()
-
-                # Send result to player
-                conn.sendall(f"RESULT {result_msg}\n".encode())
-                # Notify opponent
-                game.players[opponent_index].sendall(
-                    f"Opponent fired at {coord}: {result_msg}\n".encode()
-                )
-
-                # ✅ ONLY declare win if it was a hit AND all ships are sunk
-                if status == 'hit' and board.all_ships_sunk():
-                    conn.sendall("You win!\n".encode())
-                    game.players[opponent_index].sendall("You lose!\n".encode())
-                    break
-                else:
-                    game.switch_turn()
-
-            else:
+            if not msg.startswith("FIRE"):
                 conn.sendall("Invalid command. Use: FIRE <coord> or QUIT\n".encode())
+                continue
+
+            parts = msg.split()
+            if len(parts) != 2 or not is_valid_coord(parts[1]):
+                conn.sendall("Invalid FIRE format. Use: FIRE A1-J10\n".encode())
+                continue
+
+            if game.current_turn != player_index:
+                conn.sendall("Not your turn.\n".encode())
+                continue
+
+            coord = parts[1]
+            row, col = coord_to_indices(coord)
+            status, sunk = board.fire_at(row, col)
+            result_msg = f"{status.upper()} — Sunk {sunk}" if sunk else status.upper()
+
+            conn.sendall(f"RESULT {result_msg}\n".encode())
+            game.players[opponent_index].sendall(
+                f"Opponent fired at {coord}: {result_msg}\n".encode())
+
+            if status == 'hit' and board.all_ships_sunk():
+                conn.sendall("You win!\n".encode())
+                game.players[opponent_index].sendall("You lose!\n".encode())
+                break
+            else:
+                game.switch_turn()
+
+        except socket.timeout:
+            conn.sendall("Inactivity timeout. You forfeit your turn.\n".encode())
+            game.players[opponent_index].sendall("Opponent timed out. Your turn.\n".encode())
+            game.switch_turn()
+            continue
 
         except Exception as e:
-            print(f"[ERROR] With Player {player_index+1}: {e}")
+            print(f"[ERROR] Player {player_index+1}: {e}")
+            try:
+                game.players[opponent_index].sendall("Opponent disconnected. You win!\n".encode())
+            except:
+                pass
             break
 
     conn.close()
 
+# --- Step 4: Accept incoming players and handle games ---
+def lobby_listener():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind((HOST, PORT))
+    server_socket.listen()
 
-def main():
-    server = setup_server()
-    players = wait_for_players(server)
-    game = GameState(players[0], players[1])
+    print(f"[SERVER] Listening on {HOST}:{PORT}")
 
-    threads = []
-    for i in range(2):
-        t = threading.Thread(target=handle_player, args=(i, game))
-        t.start()
-        threads.append(t)
+    waiting_players = []
+    while True:
+        conn, addr = server_socket.accept()
+        print(f"[CONNECT] Player joined from {addr}")
 
-    for t in threads:
-        t.join()
+        if len(waiting_players) >= MAX_PLAYERS:
+            conn.sendall("Server full. Please try again later.\n".encode())
+            conn.close()
+            continue
 
-    print("[SERVER] Game over. Server shutting down.")
-    server.close()
+        waiting_players.append(conn)
 
+        if len(waiting_players) == MAX_PLAYERS:
+            game = GameState(waiting_players)
+            start_game(game)
+            waiting_players.clear()
 
 if __name__ == '__main__':
-    main()
+    lobby_listener()
