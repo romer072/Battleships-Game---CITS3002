@@ -25,16 +25,17 @@ def simulate_player(player_number, fire_coords):
         # Start listener thread
         threading.Thread(target=listen, daemon=True).start()
 
-        # Let the server start the game
+        # Let server send intro messages
         time.sleep(2)
 
+        # Simulate firing sequence
         for coord in fire_coords:
             msg = f"FIRE {coord}"
             print(f"[Player {player_number}] Sending: {msg}")
             sock.sendall((msg + "\n").encode())
-            time.sleep(3)  # Wait for turn + opponent response
+            time.sleep(3)  # Wait to respect turn order and allow response
 
-        # Exit game cleanly
+        # Send QUIT to end the game
         time.sleep(2)
         sock.sendall(b"QUIT\n")
         print(f"[Player {player_number}] Sent: QUIT")
@@ -44,8 +45,7 @@ def simulate_player(player_number, fire_coords):
         print(f"[Player {player_number}] Error: {e}")
 
 def main():
-    # 🔫 Player 1 fires at A1, A2
-    # 🔫 Player 2 fires at B1, B2
+    # Customize shots here
     player1_coords = ["A1", "A2"]
     player2_coords = ["B1", "B2"]
 
@@ -57,6 +57,7 @@ def main():
 
     t1.join()
     t2.join()
+
     print("\n✅ [Test Complete] Both players have finished.\n")
 
 if __name__ == '__main__':

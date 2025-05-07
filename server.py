@@ -122,25 +122,34 @@ def handle_player(player_index, game: GameState):
                     continue
 
                 coord = parts[1]
-                
                 try:
                     row, col = coord_to_indices(coord)
-                    result = board.fire_at(row, col)  # 👈 YOUR actual method
-                except Exception as e:
+                    status, sunk = board.fire_at(row, col)
+                except Exception:
                     conn.sendall(f"Invalid coordinate: {coord}\n".encode())
                     continue
 
-                conn.sendall(f"RESULT {result}\n".encode())
+                # Format result message
+                if sunk:
+                    result_msg = f"{status.upper()} — Sunk {sunk}"
+                else:
+                    result_msg = status.upper()
+
+                # Send result to player
+                conn.sendall(f"RESULT {result_msg}\n".encode())
+                # Notify opponent
                 game.players[opponent_index].sendall(
-                    f"Opponent fired at {coord}: {result}\n".encode()
+                    f"Opponent fired at {coord}: {result_msg}\n".encode()
                 )
 
-                if board.all_ships_sunk():
+                # ✅ ONLY declare win if it was a hit AND all ships are sunk
+                if status == 'hit' and board.all_ships_sunk():
                     conn.sendall("You win!\n".encode())
                     game.players[opponent_index].sendall("You lose!\n".encode())
                     break
                 else:
                     game.switch_turn()
+
             else:
                 conn.sendall("Invalid command. Use: FIRE <coord> or QUIT\n".encode())
 
