@@ -227,6 +227,19 @@ class Board:
             row_str = " ".join(grid_to_print[r][c] for c in range(self.size))
             print(f"{row_label:2} {row_str}")
 
+    def render_display_grid(self):
+        """
+        Returns a string version of the display grid to show to the player.
+        """
+        header = "   " + " ".join(f"{i+1:2}" for i in range(len(self.display_grid[0])))
+        rows = []
+        for r in range(len(self.display_grid)):
+            row_letter = chr(ord('A') + r)
+            row_str = " ".join(self.display_grid[r])
+            rows.append(f"{row_letter}  {row_str}")
+        return header + "\n" + "\n".join(rows) + "\n"
+
+
 
 def parse_coordinate(coord_str):
     """
