@@ -31,11 +31,11 @@ This project implements a **networked, turn-based Battleship game** called **BEE
 
 ### ✅ Tier 1: Basic 2-Player Game with Concurrency
 
-- [x] Fix concurrency issues in client (separate send/receive threads)
-- [x] Enable 2-player turn-based gameplay
-- [x] Game ends when one fleet is destroyed
-- [x] Basic client-server message exchange
-- [x] Assumes stable connections (no disconnection handling)
+- [Y] Fix concurrency issues in client (separate send/receive threads)
+- [Y] Enable 2-player turn-based gameplay
+- [Y] Game ends when one fleet is destroyed
+- [Y] Basic client-server message exchange
+- [Y] Assumes stable connections (no disconnection handling)
 
 ### ⚙️ Tier 2: Improved Game UX and Robustness
 
