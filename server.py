@@ -1,63 +1,26 @@
-# """
-# server.py
-
-# Serves a single-player Battleship session to one connected client.
-# Game logic is handled entirely on the server using battleship.py.
-# Client sends FIRE commands, and receives game feedback.
-
-# TODO: For Tier 1, item 1, you don't need to modify this file much. 
-# The core issue is in how the client handles incoming messages.
-# However, if you want to support multiple clients (i.e. progress through further Tiers), you'll need concurrency here too.
-# """
-
-# import socket
-# from battleship import run_single_player_game_online
-
-# HOST = '127.0.0.1'
-# PORT = 5000
-
-# def main():
-#     print(f"[INFO] Server listening on {HOST}:{PORT}")
-#     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-#         s.bind((HOST, PORT))
-#         s.listen(2)
-#         conn, addr = s.accept()
-#         print(f"[INFO] Client connected from {addr}")
-#         with conn:
-#             rfile = conn.makefile('r')
-#             wfile = conn.makefile('w')
-#             run_single_player_game_online(rfile, wfile)
-#         print("[INFO] Client disconnected.")
-
-# # HINT: For multiple clients, you'd need to:
-# # 1. Accept connections in a loop
-# # 2. Handle each client in a separate thread
-# # 3. Import threading and create a handle_client function
-
-# if __name__ == "__main__":
-#     main()
-
-
-
+# Step-by-step scaffold for Tier 3: Supporting spectators, multiple players, reconnection, rematch, and match announcements
 
 import socket
 import threading
-import sys
 import time
-from battleship import Board  # You must already have this defined
-
+from battleship import Board
 
 HOST = '0.0.0.0'
 PORT = 12345
-MAX_PLAYERS = 2
 INACTIVITY_TIMEOUT = 30
+RECONNECT_TIMEOUT = 60  # seconds
+
+disconnected_players = {}  # name -> (disconnect_time, board, opponent_index, was_current_turn, game)
 
 class GameState:
-    def __init__(self, players):
-        self.players = players
+    def __init__(self, players, spectators, player_names):
+        self.players = players  # [conn1, conn2]
         self.boards = [Board(), Board()]
-        self.current_turn = 0  # 0: player 1, 1: player 2
+        self.current_turn = 0
+        self.spectators = spectators  # List of extra client sockets
+        self.names = player_names
         self.lock = threading.Lock()
+        self.reconnected = [False, False]
 
     def switch_turn(self):
         with self.lock:
@@ -66,6 +29,8 @@ class GameState:
     def get_opponent_index(self, i):
         return 1 - i
 
+# Broadcast a message to all spectators
+    
 def coord_to_indices(coord):
     """
     Converts coordinate like 'B5' to (1, 4)
@@ -79,34 +44,54 @@ def coord_to_indices(coord):
     except:
         raise ValueError("Invalid coordinate format.")
 
-# --- Step 1: Helper to validate coordinates ---
-def is_valid_coord(coord):
-    if len(coord) < 2:
-        return False
-    row = coord[0].upper()
-    col = coord[1:]
-    return row in "ABCDEFGHIJ" and col.isdigit() and 1 <= int(col) <= 10
+def broadcast_to_spectators(message, spectators):
+    dead = []
+    for sock in spectators:
+        try:
+            sock.sendall(f"[SPECTATOR] {message}\n".encode())
+        except:
+            dead.append(sock)
+    for s in dead:
+        spectators.remove(s)
 
-# --- Step 2: Start and restart games ---
-def start_game(game):
-    for idx in range(MAX_PLAYERS):
-        game.players[idx].sendall(f"You are Player {idx+1}\n".encode())
-    time.sleep(1)
+# Announce new match
 
-    threads = []
-    for idx in range(MAX_PLAYERS):
-        t = threading.Thread(target=handle_player, args=(idx, game))
-        t.start()
-        threads.append(t)
+def broadcast_match_start(p1, p2, spectators):
+    message = f"New match starting: {p1} vs {p2}!"
+    broadcast_to_spectators(message, spectators)
+    for sock in spectators:
+        try:
+            sock.sendall("Match will begin shortly...\n".encode())
+        except:
+            pass
+    time.sleep(2)  # Optional countdown buffer
 
-    for t in threads:
-        t.join()
+# Accept client names (optional improvement)
+def receive_name(conn):
+    conn.sendall("Enter your name:\n".encode())
+    try:
+        name = conn.recv(1024).decode().strip()
+        return name if name else "Anonymous"
+    except:
+        return "Anonymous"
 
+# Handle spectator input
 
+def handle_spectator(conn, name):
+    try:
+        conn.sendall("You are now a spectator. Enjoy the game!\n".encode())
+        while True:
+            msg = conn.recv(1024).decode().strip()
+            if not msg:
+                break
+            conn.sendall("[ERROR] You are a spectator. You cannot play.\n".encode())
+    except:
+        pass
+    conn.close()
 
+# Handle each active player
 
-# --- Step 3: Handle each player's session ---
-def handle_player(player_index, game: GameState):
+def handle_player(player_index, game: GameState, names):
     conn = game.players[player_index]
     opponent_index = game.get_opponent_index(player_index)
     board = game.boards[opponent_index]
@@ -126,8 +111,8 @@ def handle_player(player_index, game: GameState):
                 break
 
             if msg.upper() == 'SHOW':
-                board_view = game.boards[player_index].render_display_grid()
-                conn.sendall(board_view.encode())
+                view = game.boards[player_index].render_display_grid()
+                conn.sendall(view.encode())
                 continue
 
             if not msg.startswith("FIRE"):
@@ -135,7 +120,7 @@ def handle_player(player_index, game: GameState):
                 continue
 
             parts = msg.split()
-            if len(parts) != 2 or not is_valid_coord(parts[1]):
+            if len(parts) != 2 or parts[1][0].upper() not in "ABCDEFGHIJ":
                 conn.sendall("Invalid FIRE format. Use: FIRE A1-J10\n".encode())
                 continue
 
@@ -150,11 +135,34 @@ def handle_player(player_index, game: GameState):
 
             conn.sendall(f"RESULT {result_msg}\n".encode())
             game.players[opponent_index].sendall(
-                f"Opponent fired at {coord}: {result_msg}\n".encode())
+                f"{names[player_index]} fired at {coord}: {result_msg}\n".encode())
+
+            broadcast_to_spectators(
+                f"{names[player_index]} fired at {coord}: {result_msg}",
+                game.spectators
+            )
 
             if status == 'hit' and board.all_ships_sunk():
-                conn.sendall("You win!\n".encode())
-                game.players[opponent_index].sendall("You lose!\n".encode())
+                conn.sendall("You win!\nDo you want a rematch? (YES/NO)\n".encode())
+                game.players[opponent_index].sendall("You lose!\nDo you want a rematch? (YES/NO)\n".encode())
+                broadcast_to_spectators(f"{names[player_index]} won the game!", game.spectators)
+
+                try:
+                    answer1 = game.players[player_index].recv(1024).decode().strip().upper()
+                    answer2 = game.players[opponent_index].recv(1024).decode().strip().upper()
+
+                    if answer1 == "YES" and answer2 == "YES":
+                        conn.sendall("Rematch starting!\n".encode())
+                        game.players[opponent_index].sendall("Rematch starting!\n".encode())
+                        game.boards = [Board(), Board()]
+                        game.current_turn = 0
+                        broadcast_to_spectators(f"Rematch starting: {names[0]} vs {names[1]}!", game.spectators)
+                        continue
+                    else:
+                        conn.sendall("Game over.\n".encode())
+                        game.players[opponent_index].sendall("Game over.\n".encode())
+                except:
+                    pass
                 break
             else:
                 game.switch_turn()
@@ -162,20 +170,19 @@ def handle_player(player_index, game: GameState):
         except socket.timeout:
             conn.sendall("Inactivity timeout. You forfeit your turn.\n".encode())
             game.players[opponent_index].sendall("Opponent timed out. Your turn.\n".encode())
+            broadcast_to_spectators(f"{names[player_index]} timed out. Turn skipped.", game.spectators)
             game.switch_turn()
             continue
 
         except Exception as e:
             print(f"[ERROR] Player {player_index+1}: {e}")
-            try:
-                game.players[opponent_index].sendall("Opponent disconnected. You win!\n".encode())
-            except:
-                pass
+            now = time.time()
+            disconnected_players[names[player_index]] = (now, game.boards, opponent_index, game.current_turn == player_index, game)
             break
 
     conn.close()
 
-# --- Step 4: Accept incoming players and handle games ---
+# Accept and organize incoming clients
 def lobby_listener():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -184,22 +191,67 @@ def lobby_listener():
 
     print(f"[SERVER] Listening on {HOST}:{PORT}")
 
-    waiting_players = []
+    clients = []
+    names = []
+
     while True:
         conn, addr = server_socket.accept()
-        print(f"[CONNECT] Player joined from {addr}")
+        print(f"[CONNECT] {addr}")
+        name = receive_name(conn)
 
-        if len(waiting_players) >= MAX_PLAYERS:
-            conn.sendall("Server full. Please try again later.\n".encode())
-            conn.close()
-            continue
+        # Check for reconnection
+        if name in disconnected_players:
+            dc_time, saved_boards, opponent_index, was_current_turn, game = disconnected_players[name]
+            if time.time() - dc_time <= RECONNECT_TIMEOUT:
+                print(f"[RECONNECT] {name} reconnected.")
+                player_index = opponent_index ^ 1
+                game.players[player_index] = conn
+                game.boards = saved_boards
+                game.reconnected[player_index] = True
+                broadcast_to_spectators(f"{name} has rejoined the game. 👋", game.spectators)
+                t = threading.Thread(target=handle_player, args=(player_index, game, game.names))
+                t.start()
+                del disconnected_players[name]
+                continue
+            else:
+                print(f"[REJECT] {name} expired reconnect window.")
+                del disconnected_players[name]
 
-        waiting_players.append(conn)
+        clients.append(conn)
+        names.append(name)
 
-        if len(waiting_players) == MAX_PLAYERS:
-            game = GameState(waiting_players)
-            start_game(game)
-            waiting_players.clear()
+        if len(clients) >= 2:
+            players = clients[:2]
+            spectators = clients[2:]
+            player_names = names[:2]
+
+            game = GameState(players, spectators, player_names)
+            broadcast_match_start(player_names[0], player_names[1], spectators)
+
+            for idx in range(2):
+                players[idx].sendall(f"You are Player {idx+1} ({player_names[idx]})\n".encode())
+
+            # Start player threads
+            t1 = threading.Thread(target=handle_player, args=(0, game, player_names))
+            t2 = threading.Thread(target=handle_player, args=(1, game, player_names))
+            t1.start()
+            t2.start()
+
+            # Start spectator threads
+            for i, spec_conn in enumerate(spectators):
+                t = threading.Thread(target=handle_spectator, args=(spec_conn, names[i+2]))
+                t.start()
+
+            t1.join()
+            t2.join()
+
+            # After game ends: remove those 2 from lists
+            for p in players:
+                if p in clients:
+                    clients.remove(p)
+            for n in player_names:
+                if n in names:
+                    names.remove(n)
 
 if __name__ == '__main__':
     lobby_listener()
