@@ -3,6 +3,7 @@
 import socket
 import threading
 import time
+import zlib
 from battleship import Board
 import os
 
@@ -20,20 +21,22 @@ def build_packet(seq, pkt_type, payload):
     data = payload.encode()
     length = len(data)
     header = bytes([seq, pkt_type, length]) + data
-    checksum = sum(header) % 256
-    return header + bytes([checksum])
+    crc = zlib.crc32(header) & 0xFFFFFFFF  # 4-byte checksum
+    return header + crc.to_bytes(4, 'big')
 
 def parse_packet(packet):
-    if len(packet) < 4:
+    if len(packet) < 7:  # Minimum packet with 0-length payload and 4-byte CRC
         raise ValueError("Packet too short")
     seq = packet[0]
     pkt_type = packet[1]
     length = packet[2]
-    if len(packet) < 4 + length:
+    expected_length = 3 + length + 4
+    if len(packet) < expected_length:
         raise ValueError("Incomplete packet data")
     payload = packet[3:3+length].decode()
-    checksum = packet[3+length]
-    if sum(packet[:3+length]) % 256 != checksum:
+    received_crc = int.from_bytes(packet[3+length:expected_length], 'big')
+    calculated_crc = zlib.crc32(packet[:3+length]) & 0xFFFFFFFF
+    if received_crc != calculated_crc:
         raise ValueError("Checksum mismatch")
     return seq, pkt_type, payload
 
