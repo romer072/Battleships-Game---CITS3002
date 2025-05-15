@@ -4,6 +4,12 @@ import socket
 import threading
 import time
 from battleship import Board
+import os
+
+def log_event(message):
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    with open("match_log.txt", "a") as f:
+        f.write(f"[{timestamp}] {message}\n")
 
 HOST = '0.0.0.0'
 PORT = 12345
@@ -59,6 +65,7 @@ def broadcast_to_spectators(message, spectators):
 def broadcast_match_start(p1, p2, spectators):
     message = f"New match starting: {p1} vs {p2}!"
     broadcast_to_spectators(message, spectators)
+    log_event(f"New match: {p1} vs {p2}")
     for sock in spectators:
         try:
             sock.sendall("Match will begin shortly...\n".encode())
@@ -71,7 +78,10 @@ def receive_name(conn):
     conn.sendall("Enter your name:\n".encode())
     try:
         name = conn.recv(1024).decode().strip()
-        return name if name else "Anonymous"
+        if not name:
+            name = "Anonymous"
+        log_event(f"{name} connected.")
+        return name
     except:
         return "Anonymous"
 
@@ -97,6 +107,7 @@ def handle_player(player_index, game: GameState, names):
     board = game.boards[opponent_index]
 
     conn.sendall("Game started! You will be firing at your opponent's board.\n".encode())
+    log_event(f"{names[player_index]} is now Player {player_index+1}.")
 
     while True:
         try:
@@ -108,6 +119,7 @@ def handle_player(player_index, game: GameState, names):
             if msg.lower() == 'quit':
                 conn.sendall("You quit. Game over.\n".encode())
                 game.players[opponent_index].sendall("Opponent quit. You win!\n".encode())
+                log_event(f"{names[player_index]} quit.")
                 break
 
             if msg.upper() == 'SHOW':
@@ -141,11 +153,13 @@ def handle_player(player_index, game: GameState, names):
                 f"{names[player_index]} fired at {coord}: {result_msg}",
                 game.spectators
             )
+            log_event(f"{names[player_index]} fired at {coord}: {result_msg}")
 
             if status == 'hit' and board.all_ships_sunk():
                 conn.sendall("You win!\nDo you want a rematch? (YES/NO)\n".encode())
                 game.players[opponent_index].sendall("You lose!\nDo you want a rematch? (YES/NO)\n".encode())
                 broadcast_to_spectators(f"{names[player_index]} won the game!", game.spectators)
+                log_event(f"{names[player_index]} won. {names[opponent_index]} lost.")
 
                 try:
                     answer1 = game.players[player_index].recv(1024).decode().strip().upper()
@@ -157,10 +171,12 @@ def handle_player(player_index, game: GameState, names):
                         game.boards = [Board(), Board()]
                         game.current_turn = 0
                         broadcast_to_spectators(f"Rematch starting: {names[0]} vs {names[1]}!", game.spectators)
+                        log_event(f"Rematch accepted by both players.")
                         continue
                     else:
                         conn.sendall("Game over.\n".encode())
                         game.players[opponent_index].sendall("Game over.\n".encode())
+                        log_event("Game session ended without rematch.")
                 except:
                     pass
                 break
@@ -171,6 +187,7 @@ def handle_player(player_index, game: GameState, names):
             conn.sendall("Inactivity timeout. You forfeit your turn.\n".encode())
             game.players[opponent_index].sendall("Opponent timed out. Your turn.\n".encode())
             broadcast_to_spectators(f"{names[player_index]} timed out. Turn skipped.", game.spectators)
+            log_event(f"{names[player_index]} timed out.")
             game.switch_turn()
             continue
 
@@ -178,6 +195,7 @@ def handle_player(player_index, game: GameState, names):
             print(f"[ERROR] Player {player_index+1}: {e}")
             now = time.time()
             disconnected_players[names[player_index]] = (now, game.boards, opponent_index, game.current_turn == player_index, game)
+            log_event(f"{names[player_index]} disconnected.")
             break
 
     conn.close()
@@ -204,6 +222,7 @@ def lobby_listener():
             dc_time, saved_boards, opponent_index, was_current_turn, game = disconnected_players[name]
             if time.time() - dc_time <= RECONNECT_TIMEOUT:
                 print(f"[RECONNECT] {name} reconnected.")
+                log_event(f"{name} reconnected.")
                 player_index = opponent_index ^ 1
                 game.players[player_index] = conn
                 game.boards = saved_boards
