@@ -16,6 +16,7 @@ PACKET_TYPE_FIRE = 0x01
 PACKET_TYPE_SHOW = 0x02
 PACKET_TYPE_QUIT = 0x03
 PACKET_TYPE_ERROR = 0xFF
+PACKET_TYPE_CHAT = 0x04
 
 def build_packet(seq, pkt_type, payload):
     data = payload.encode()
@@ -89,6 +90,18 @@ def broadcast_to_spectators(message, spectators):
     for s in dead:
         spectators.remove(s)
 
+def broadcast_chat(from_name, message, game):
+    full_message = f"[{from_name}]: {message}"
+    packet = build_packet(0, PACKET_TYPE_CHAT, full_message)
+
+    for conn in game.players + game.spectators:
+        try:
+            conn.sendall(packet)
+        except:
+            continue
+
+    log_event(full_message)
+
 # Announce new match
 
 def broadcast_match_start(p1, p2, spectators):
@@ -116,14 +129,21 @@ def receive_name(conn):
 
 # Handle spectator input
 
-def handle_spectator(conn, name):
+def handle_spectator(conn, name, game):
     try:
         conn.sendall("You are now a spectator. Enjoy the game!\n".encode())
         while True:
             msg = conn.recv(1024).decode().strip()
             if not msg:
                 break
-            conn.sendall("[ERROR] You are a spectator. You cannot play.\n".encode())
+            chat_msg = f"[{name}]: {msg}"
+            packet = build_packet(0, PACKET_TYPE_CHAT, chat_msg)
+            for conn_target in game.players + game.spectators:
+                try:
+                    conn_target.sendall(packet)
+                except:
+                    continue
+            log_event(chat_msg)
     except:
         pass
     conn.close()
@@ -157,6 +177,10 @@ def handle_player(player_index, game: GameState, names):
             if pkt_type == PACKET_TYPE_SHOW:
                 view = game.boards[player_index].render_display_grid()
                 conn.sendall(build_packet(seq, PACKET_TYPE_SHOW, view))
+                continue
+
+            if pkt_type == PACKET_TYPE_CHAT:
+                broadcast_chat(names[player_index], payload, game)
                 continue
 
             if pkt_type != PACKET_TYPE_FIRE:
@@ -283,7 +307,7 @@ def lobby_listener():
 
             # Start spectator threads
             for i, spec_conn in enumerate(spectators):
-                t = threading.Thread(target=handle_spectator, args=(spec_conn, names[i+2]))
+                t = threading.Thread(target=handle_spectator, args=(spec_conn, names[i+2], game))
                 t.start()
 
             t1.join()
