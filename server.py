@@ -11,6 +11,32 @@ def log_event(message):
     with open("match_log.txt", "a") as f:
         f.write(f"[{timestamp}] {message}\n")
 
+PACKET_TYPE_FIRE = 0x01
+PACKET_TYPE_SHOW = 0x02
+PACKET_TYPE_QUIT = 0x03
+PACKET_TYPE_ERROR = 0xFF
+
+def build_packet(seq, pkt_type, payload):
+    data = payload.encode()
+    length = len(data)
+    header = bytes([seq, pkt_type, length]) + data
+    checksum = sum(header) % 256
+    return header + bytes([checksum])
+
+def parse_packet(packet):
+    if len(packet) < 4:
+        raise ValueError("Packet too short")
+    seq = packet[0]
+    pkt_type = packet[1]
+    length = packet[2]
+    if len(packet) < 4 + length:
+        raise ValueError("Incomplete packet data")
+    payload = packet[3:3+length].decode()
+    checksum = packet[3+length]
+    if sum(packet[:3+length]) % 256 != checksum:
+        raise ValueError("Checksum mismatch")
+    return seq, pkt_type, payload
+
 HOST = '0.0.0.0'
 PORT = 12345
 INACTIVITY_TIMEOUT = 30
@@ -112,47 +138,43 @@ def handle_player(player_index, game: GameState, names):
     while True:
         try:
             conn.settimeout(INACTIVITY_TIMEOUT)
-            msg = conn.recv(1024).decode().strip()
-            if not msg:
-                raise ConnectionError("Empty message received")
+            raw = conn.recv(1024)
+            try:
+                seq, pkt_type, payload = parse_packet(raw)
+            except ValueError as e:
+                conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, str(e)))
+                continue
 
-            if msg.lower() == 'quit':
-                conn.sendall("You quit. Game over.\n".encode())
-                game.players[opponent_index].sendall("Opponent quit. You win!\n".encode())
+            if pkt_type == PACKET_TYPE_QUIT:
+                conn.sendall(build_packet(seq, PACKET_TYPE_QUIT, "You quit. Game over."))
+                game.players[opponent_index].sendall(build_packet(seq, PACKET_TYPE_QUIT, "Opponent quit. You win!"))
                 log_event(f"{names[player_index]} quit.")
                 break
 
-            if msg.upper() == 'SHOW':
+            if pkt_type == PACKET_TYPE_SHOW:
                 view = game.boards[player_index].render_display_grid()
-                conn.sendall(view.encode())
+                conn.sendall(build_packet(seq, PACKET_TYPE_SHOW, view))
                 continue
 
-            if not msg.startswith("FIRE"):
-                conn.sendall("Invalid command. Use: FIRE <coord> or QUIT\n".encode())
-                continue
-
-            parts = msg.split()
-            if len(parts) != 2 or parts[1][0].upper() not in "ABCDEFGHIJ":
-                conn.sendall("Invalid FIRE format. Use: FIRE A1-J10\n".encode())
+            if pkt_type != PACKET_TYPE_FIRE:
+                conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Invalid command."))
                 continue
 
             if game.current_turn != player_index:
-                conn.sendall("Not your turn.\n".encode())
+                conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Not your turn."))
                 continue
 
-            coord = parts[1]
+            coord = payload
+            if len(coord) < 2 or coord[0].upper() not in "ABCDEFGHIJ":
+                conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Invalid FIRE format. Use: FIRE A1-J10"))
+                continue
+
             row, col = coord_to_indices(coord)
             status, sunk = board.fire_at(row, col)
             result_msg = f"{status.upper()} — Sunk {sunk}" if sunk else status.upper()
-
-            conn.sendall(f"RESULT {result_msg}\n".encode())
-            game.players[opponent_index].sendall(
-                f"{names[player_index]} fired at {coord}: {result_msg}\n".encode())
-
-            broadcast_to_spectators(
-                f"{names[player_index]} fired at {coord}: {result_msg}",
-                game.spectators
-            )
+            conn.sendall(build_packet(seq, PACKET_TYPE_FIRE, f"RESULT {result_msg}"))
+            game.players[opponent_index].sendall(build_packet(seq, PACKET_TYPE_FIRE, f"{names[player_index]} fired at {coord}: {result_msg}"))
+            broadcast_to_spectators(f"{names[player_index]} fired at {coord}: {result_msg}", game.spectators)
             log_event(f"{names[player_index]} fired at {coord}: {result_msg}")
 
             if status == 'hit' and board.all_ships_sunk():
