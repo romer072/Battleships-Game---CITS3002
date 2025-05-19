@@ -112,19 +112,26 @@ reconnect_pool = {}  # Stores reconnecting players: {name: (placements, idx, gam
 
 # === Handle a single player's communication ===
 def handle_player(player_idx, game):
-    conn = game.players[player_idx]
-    opp_idx = game.get_opponent_index(player_idx)
-    placement = game.placements[player_idx]
-    name = game.names[player_idx]
+    # If player_idx >= len(game.players), this is a spectator
+    is_spectator = player_idx >= len(game.players)
+    if is_spectator:
+        conn = game.spectators[player_idx - len(game.players)]
+        name = game.names[player_idx]
+    else:
+        conn = game.players[player_idx]
+        opp_idx = game.get_opponent_index(player_idx)
+        placement = game.placements[player_idx]
+        name = game.names[player_idx]
 
     try:
         # Instructional welcome message for new players
-        welcome_msg = (
-            "Welcome to Battleship! Place your ships using the format: place <coord> <H/V> <ship_name>\n"
-            "Available ships: Carrier(5), Battleship(4), Cruiser(3), Submarine(3), Destroyer(2)\n"
-            "Example: place A1 H Carrier"
-        )
-        conn.sendall(build_packet(0, PACKET_TYPE_CHAT, welcome_msg))
+        if not is_spectator:
+            welcome_msg = (
+                "Welcome to Battleship! Place your ships using the format: place <coord> <H/V> <ship_name>\n"
+                "Available ships: Carrier(5), Battleship(4), Cruiser(3), Submarine(3), Destroyer(2)\n"
+                "Example: place A1 H Carrier"
+            )
+            conn.sendall(build_packet(0, PACKET_TYPE_CHAT, welcome_msg))
 
         # Main command loop for a player
         while True:
@@ -135,19 +142,24 @@ def handle_player(player_idx, game):
                 # === Handle Quit Command ===
                 if pkt_type == PACKET_TYPE_QUIT:
                     conn.sendall(build_packet(seq, PACKET_TYPE_QUIT, "You quit."))
-                    game.players[opp_idx].sendall(build_packet(seq, PACKET_TYPE_CHAT, f"{name} quit. You win!"))
+                    if not is_spectator:
+                        game.players[opp_idx].sendall(build_packet(seq, PACKET_TYPE_CHAT, f"{name} quit. You win!"))
                     break
 
                 # === Show Board Request ===
                 elif pkt_type == PACKET_TYPE_SHOW:
-                    view = placement.get_board().render_display_grid()
-                    if len(view.encode()) > 255:
-                        send_board_in_chunks(conn, seq, view)
-                    else:
-                        conn.sendall(build_packet(seq, PACKET_TYPE_SHOW, view))
+                    if not is_spectator:
+                        view = placement.get_board().render_display_grid()
+                        if len(view.encode()) > 255:
+                            send_board_in_chunks(conn, seq, view)
+                        else:
+                            conn.sendall(build_packet(seq, PACKET_TYPE_SHOW, view))
 
                 # === Place Ship ===
                 elif pkt_type == PACKET_TYPE_PLACE:
+                    if is_spectator:
+                        conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Spectators cannot place ships."))
+                        continue
                     if not game.placement_phase:
                         conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Placement phase is over."))
                         continue
@@ -175,6 +187,9 @@ def handle_player(player_idx, game):
 
                 # === Fire at Opponent ===
                 elif pkt_type == PACKET_TYPE_FIRE:
+                    if is_spectator:
+                        conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Spectators cannot fire."))
+                        continue
                     if game.placement_phase:
                         conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Game hasn't started yet. Place your ships first."))
                         continue
@@ -203,18 +218,23 @@ def handle_player(player_idx, game):
                     conn.sendall(build_packet(seq, PACKET_TYPE_ERROR, "Unknown command."))
 
             except socket.timeout:
-                conn.sendall(build_packet(0, PACKET_TYPE_ERROR, "Timeout. You forfeit your turn."))
-                game.players[opp_idx].sendall(build_packet(0, PACKET_TYPE_CHAT, f"{name} timed out."))
-                game.switch_turn()
+                if not is_spectator:
+                    conn.sendall(build_packet(0, PACKET_TYPE_ERROR, "Timeout. You forfeit your turn."))
+                    game.players[opp_idx].sendall(build_packet(0, PACKET_TYPE_CHAT, f"{name} timed out."))
+                    game.switch_turn()
 
             except Exception as e:
-                reconnect_pool[name] = (game.placements, opp_idx, game)
+                if not is_spectator:
+                    reconnect_pool[name] = (game.placements, opp_idx, game)
                 break  # Leave handler, assume disconnect
 
     except Exception as outer:
         print(f"[ERROR] {name}: {outer}")
 
     conn.close()
+    if is_spectator:
+        game.spectators.remove(conn)
+        game.names.remove(name)
 
 # === Extract player name from JOIN packet ===
 def receive_name(conn):
@@ -238,6 +258,7 @@ def lobby():
 
     waiting = []  # Clients waiting to be paired
     names = []
+    current_game = None  # Track the current game
 
     while True:
         conn, addr = s.accept()
@@ -254,22 +275,29 @@ def lobby():
             t.start()
             continue
 
+        # If there's an active game, add new connection as spectator
+        if current_game is not None:
+            current_game.spectators.append(conn)
+            current_game.names.append(name)
+            t = threading.Thread(target=handle_player, args=(len(current_game.players), current_game))
+            t.start()
+            continue
+
         waiting.append(conn)
         names.append(name)
 
         # When 2 players are ready, start a game
         if len(waiting) == 2:
             players = waiting[:2]
-            spectators = waiting[2:]
             player_names = names[:2]
-            game = GameState(players, spectators, player_names)
+            current_game = GameState(players, [], player_names)  # Initialize with empty spectators list
 
             # Let each player know who they are
             for i in range(2):
                 players[i].sendall(build_packet(0, PACKET_TYPE_CHAT, f"You are Player {i+1} ({player_names[i]})"))
 
-            threading.Thread(target=handle_player, args=(0, game)).start()
-            threading.Thread(target=handle_player, args=(1, game)).start()
+            threading.Thread(target=handle_player, args=(0, current_game)).start()
+            threading.Thread(target=handle_player, args=(1, current_game)).start()
 
             # Clear paired players from the queue
             waiting.clear()
