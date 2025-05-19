@@ -1,113 +1,120 @@
-# BISMILLAH
-# alhamdulilah
-# BEER: Battleships - Engage in Explosive Rivalry
+# BEER – Battleships: Engage in Explosive Rivalry
 
-CITS3002 — Computer Networks  
-University of Western Australia  
-**Due:** 19 May 2025, 11:59 PM  
-**Weight:** 30%  
-**Group Project (max 2 members)**
+**BEER** (*Battleships: Engage in Explosive Rivalry*) is a two-player, turn-based Battleship game implemented in Python using TCP sockets and multithreading. Developed as part of the CITS3002 Computer Networks 2025 project, BEER showcases core networking principles through real-time game mechanics, custom communication protocols, and concurrent client-server architecture.
 
-## 😾 Project Overview
-
-This project implements a **networked, turn-based Battleship game** called **BEER**. The goal is to create a multiplayer client-server application where players can engage in real-time battles, while the server handles connections, state synchronization, and gameplay logic.
+The game supports not only classic Battleship features like ship placement and firing, but also modern enhancements such as spectator mode, real-time chat, reconnection handling, and integrity-validated packet messaging using CRC-32.
 
 ---
 
-## 🧹 Project Structure
+## 🚀 Getting Started / Installation
 
-```
-.
-├── battleship.py       # Core gameplay logic (shared)
-├── server.py           # Server to manage multiple clients and game state
-├── client.py           # Client interface for players
-├── README.md           # This file
-└── requirements.txt    # Optional - for Python dependencies if used
-```
+BEER is implemented entirely in Python using the standard library. No external dependencies are required.
 
----
+### Requirements
+- Python 3.7 or higher
 
-## 🎯 Implementation Tiers
+### Instructions
 
-### ✅ Tier 1: Basic 2-Player Game with Concurrency
+1. **Start the Server**  
+   In Terminal 1:
+   ```bash
+   python3 server.py
+   ```
 
-- [Y] Fix concurrency issues in client (separate send/receive threads)
-- [Y] Enable 2-player turn-based gameplay
-- [Y] Game ends when one fleet is destroyed
-- [Y] Basic client-server message exchange
-- [Y] Assumes stable connections (no disconnection handling)
+2. **Start the First Client (Player 1)**  
+   In Terminal 2:
+   ```bash
+   python3 client.py
+   ```
 
-### ⚙️ Tier 2: Improved Game UX and Robustness
+3. **Start the Second Client (Player 2)**  
+   In Terminal 3:
+   ```bash
+   python3 client.py
+   ```
 
-- [ ] Validate invalid inputs (e.g., bad coordinates, out-of-turn)
-- [ ] Support multiple games after the first ends
-- [ ] Inactivity timeout (e.g., 30 seconds)
-- [ ] Handle mid-game disconnections gracefully
-- [ ] Handle idle clients or multiple connections (waiting lobby)
-
-### 🌐 Tier 3: Scalability and Spectator Support
-
-- [ ] Accept multiple clients
-- [ ] Support spectator mode (real-time updates only)
-- [ ] Allow reconnections within 60s with game state recovery
-- [ ] Transition from game to game (automatic player selection)
-
-### 🔐 Tier 4: Advanced Networking Features (2+ required)
-
-- [ ] T4.1 Custom low-level protocol with checksum
-- [ ] T4.2 Instant Messaging (IM) system
-- [ ] T4.3 Encryption layer (e.g., AES)
-- [ ] T4.4 Security flaw analysis & mitigation
+> The server automatically begins the game once two players connect. Additional clients join as spectators.
 
 ---
 
-## 📦 How to Run
+## 🕹️ How to Play
 
-### Server
-
+### 🌟 1. Ship Placement Phase
+Use:
 ```bash
-python server.py
+place <coordinate> <orientation> <ship_name>
 ```
-
-### Client (in separate terminals)
-
+Examples:
 ```bash
-python client.py
+place B2 H Submarine
+```
+Available ships:
+- Carrier (5)
+- Battleship (4)
+- Cruiser (3)
+- Submarine (3)
+- Destroyer (2)
+
+### 🔥 2. Firing Phase
+Use:
+```bash
+fire <coordinate>
+```
+Example:
+```bash
+fire E6
+```
+Server will respond with: `MISS`, `HIT`, or `HIT! You sank the <ShipName>!`
+
+### 💬 3. Chat
+Send a message to all players and spectators:
+```bash
+chat <message>
+```
+Example:
+```bash
+chat Good luck!
 ```
 
-- Follow prompts to place ships and take turns.
-- Optionally modify `battleship.py` for local testing.
+### 🚪 4. Quit
+```bash
+quit
+```
+Leaves the game and ends the session for that player.
 
 ---
 
-## 🥪 Demo & Testing
+## 🗂️ Code Structure
 
-- Local 2-player testing with threads
-- Test disconnection/reconnection with timeout simulation
-- Simulate spectators by launching >2 clients
-- Check server stability under rapid messages or dropped clients
-
----
-
-## 📄 Deliverables
-
-- ✅ `BEER_report.pdf` – project explanation and design justifications
-- ✅ `BEER_code.zip` – all required code files
-- ✅ `BEER_demo.mp4` or [Demo Video Link](https://your-link-here.com)
-
-**Filename format:** `StudentID1_StudentID2_BEER.zip/pdf`
+| File               | Description |
+|--------------------|-------------|
+| `server.py`        | Launches and manages the server, handles connections, game state, turns, and chat. |
+| `client.py`        | Connects to the server, receives messages in a separate thread, and sends user commands. |
+| `battleship.py`    | Core game logic: board class, firing, placement, sinking, rendering. Includes local game mode. |
+| `ship_placement.py`| Validates and tracks ship placement for each player. |
+| `README.md`        | Documentation and setup instructions. |
+| `CITS3002_2025_Project.pdf` | Official project specification. |
 
 ---
 
-## 📚 Authors
+## 🧱 Features by Tier
 
-- **Name 1 (Student ID)**  
-- **Name 2 (Student ID)**
+### ✅ Tier 1: Core Two-Player Game
+- Threaded server/client for asynchronous messaging
+- Turn-based firing logic
+- CRC-validated custom packet protocol
+
+### ✅ Tier 2: Input Validation & Stability
+- Error handling for invalid input
+- Idle timeout triggers forfeit
+- Lobby support for new matches
+
+### ✅ Tier 3: Spectators & Reconnection
+- Spectators receive real-time updates
+- Reconnect within timeout to resume game
+
+### ✅ Tier 4: Protocol & Chat
+- Custom packet format: `[SEQ][TYPE][LEN][PAYLOAD][CRC32]`
+- Global in-game chat across players and spectators
 
 ---
-
-## 📘 Notes
-
-- Python 3.8+ recommended
-- Multithreading used for I/O concurrency
-- Custom protocol details in `report.pdf`
