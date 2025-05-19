@@ -8,7 +8,7 @@ from ship_placement import ShipPlacement    # Manages player's ship placement
 # === Server Configuration ===
 HOST = '0.0.0.0'                # Listen on all network interfaces
 PORT = 12345                   # Port the server listens on
-INACTIVITY_TIMEOUT = 300      # Time in seconds before disconnecting idle clients
+INACTIVITY_TIMEOUT = 30      # Time in seconds before disconnecting idle clients
 RECONNECT_TIMEOUT = 60        # Time window allowed for clients to reconnect
 
 # === Packet Type Constants (matches with client) ===
